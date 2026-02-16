@@ -3,169 +3,188 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Error...</title>
+    <title>System Portal</title>
     <style>
         :root {
             --accent: #00f2ff;
             --bg: #050505;
-            --panel: rgba(20, 20, 20, 0.8);
+            --glass: rgba(255, 255, 255, 0.03);
+            --border: rgba(255, 255, 255, 0.1);
         }
 
         body, html {
             margin: 0; padding: 0;
             width: 100%; height: 100%;
             background: var(--bg);
-            color: white;
-            font-family: 'Inter', system-ui, sans-serif;
+            color: #fff;
+            font-family: 'Inter', -apple-system, sans-serif;
             overflow: hidden;
         }
 
-        #content-frame {
+        #app-viewport {
             width: 100%; height: 100%;
             border: none;
-            transition: opacity 0.5s ease, filter 0.5s ease;
+            background: var(--bg);
         }
 
-        /* Modern Glass Modal */
-        #update-overlay {
+        /* Modern Glass Update Modal */
+        #sync-overlay {
             position: fixed;
             inset: 0;
-            background: rgba(0,0,0,0.8);
-            backdrop-filter: blur(12px);
+            background: rgba(0,0,0,0.85);
+            backdrop-filter: blur(20px);
             display: flex;
             align-items: center;
             justify-content: center;
-            z-index: 9999;
+            z-index: 10000;
             opacity: 0;
             pointer-events: none;
-            transition: opacity 0.4s ease;
+            transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
-        #update-overlay.visible {
+        #sync-overlay.active {
             opacity: 1;
             pointer-events: auto;
         }
 
         .modal {
-            background: var(--panel);
-            padding: 2rem;
-            border-radius: 24px;
-            border: 1px solid rgba(255,255,255,0.1);
+            padding: 3rem;
+            border-radius: 32px;
+            background: var(--glass);
+            border: 1px solid var(--border);
             text-align: center;
-            max-width: 400px;
-            box-shadow: 0 0 40px rgba(0, 242, 255, 0.15);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
         }
 
         .spinner {
-            width: 40px; height: 40px;
-            border: 3px solid rgba(255,255,255,0.1);
+            position: relative;
+            width: 60px; height: 60px;
+            margin: 0 auto 1.5rem;
+        }
+
+        .spinner-ring {
+            position: absolute;
+            inset: 0;
+            border: 2px solid var(--border);
             border-top-color: var(--accent);
             border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 1.5rem;
+            animation: spin 0.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
         }
 
         @keyframes spin { to { transform: rotate(360deg); } }
 
-        h2 { margin: 0 0 0.5rem; font-weight: 600; letter-spacing: -0.5px; }
-        p { color: #888; font-size: 0.9rem; margin: 0; }
-
-        .hidden { display: none; }
+        h2 { margin: 0; font-weight: 500; font-size: 1.25rem; }
+        p { color: #666; font-size: 0.9rem; margin-top: 0.5rem; }
     </style>
 </head>
-<body class="loading">
+<body>
 
-    <div id="update-overlay">
+    <div id="sync-overlay">
         <div class="modal">
-            <div class="spinner"></div>
-            <h2 id="status-title">Daily Syncing for new update.</h2>
-            <p id="status-desc">Fetching the latest version from GitHub...</p>
+            <div class="spinner"><div class="spinner-ring"></div></div>
+            <h2 id="sync-status">Updating Portal</h2>
+            <p>Fetching latest assets via secure blob...</p>
         </div>
     </div>
 
-    <iframe id="content-frame"></iframe>
+    <iframe id="app-viewport"></iframe>
 
 <script>
-    const frame = document.getElementById('content-frame');
-    const overlay = document.getElementById('update-overlay');
-    const title = document.getElementById('status-title');
+    const frame = document.getElementById('app-viewport');
+    const overlay = document.getElementById('sync-overlay');
+    const statusText = document.getElementById('sync-status');
     
-    const GITHUB_URL = "https://raw.githubusercontent.com/code-andrewy/jumpman64beta/refs/heads/main/wyd.html";
-    const ONE_DAY = 24 * 60 * 60 * 1000; // 24 hours in ms
+    const TARGET_URL = "https://raw.githubusercontent.com/code-andrewy/jumpman64beta/refs/heads/main/wyd.html";
+    const DAY_MS = 86400000; // 24 Hours
 
-    async function init() {
-        const lastUpdate = localStorage.getItem('last_sync_time');
-        const savedHtml = localStorage.getItem('cached_html');
+    let activeBlobUrl = null;
+
+    /**
+     * Creates a fresh Blob URL and injects it into the iframe.
+     * This bypasses many filters and keeps the site isolated.
+     */
+    function deployBlob(html) {
+        if (activeBlobUrl) URL.revokeObjectURL(activeBlobUrl);
+        
+        // Add a random unique ID to the source to bypass any internal frame caching
+        const source = html + `\n`;
+        
+        const blob = new Blob([source], { type: 'text/html' });
+        activeBlobUrl = URL.createObjectURL(blob);
+        frame.src = activeBlobUrl;
+    }
+
+    /**
+     * Fetches from GitHub, saves to storage, and deploys as Blob
+     */
+    async function syncGitHub() {
+        overlay.classList.add('active');
+        try {
+            const res = await fetch(`${TARGET_URL}?nocache=${Date.now()}`);
+            if (!res.ok) throw new Error("Fetch Failed");
+            
+            const html = await res.text();
+            
+            localStorage.setItem('portal_cache', html);
+            localStorage.setItem('portal_last_sync', Date.now());
+
+            deployBlob(html);
+            
+            // Wait for frame to signal load before hiding modal
+            frame.onload = () => {
+                setTimeout(() => overlay.classList.remove('active'), 600);
+            };
+        } catch (e) {
+            statusText.innerText = "Sync Failed";
+            console.error(e);
+            // Fallback to old cache if fetch fails
+            const fallback = localStorage.getItem('portal_cache');
+            if (fallback) deployBlob(fallback);
+            setTimeout(() => overlay.classList.remove('active'), 2000);
+        }
+    }
+
+    /**
+     * Logic Controller: Decides whether to fetch or use stored data
+     */
+    function checkAndLoad() {
+        const lastSync = localStorage.getItem('portal_last_sync');
+        const cachedHtml = localStorage.getItem('portal_cache');
         const now = Date.now();
 
-        // Check if we need to update (No cache OR older than 24 hours)
-        if (!savedHtml || !lastUpdate || (now - lastUpdate > ONE_DAY)) {
-            await performUpdate();
+        // Condition: No data OR older than 24 hours
+        if (!cachedHtml || !lastSync || (now - lastSync > DAY_MS)) {
+            syncGitHub();
         } else {
-            console.log("Loading from local cache (Updated less than 24h ago)");
-            loadIntoFrame(savedHtml);
+            // It's been less than a day: just deploy the Blob from storage
+            deployBlob(cachedHtml);
         }
     }
 
-    async function performUpdate() {
-        overlay.classList.add('visible');
-        try {
-            const response = await fetch(`${GITHUB_URL}?t=${Date.now()}`);
-            if (!response.ok) throw new Error();
-            
-            const html = await response.text();
-            
-            // Save to local storage for the next 24 hours
-            localStorage.setItem('cached_html', html);
-            localStorage.setItem('last_sync_time', Date.now().toString());
+    // --- Listeners ---
 
-            loadIntoFrame(html);
-            
-            // Success feedback
-            setTimeout(() => {
-                overlay.classList.remove('visible');
-            }, 1000);
+    // Initial launch
+    checkAndLoad();
 
-        } catch (err) {
-            title.innerText = "Sync Failed";
-            document.getElementById('status-desc').innerText = "Check connection. Using last known version.";
-            setTimeout(() => {
-                if (localStorage.getItem('cached_html')) {
-                    loadIntoFrame(localStorage.getItem('cached_html'));
-                }
-                overlay.classList.remove('visible');
-            }, 2000);
-        }
-    }
-
-    let currentBlobUrl = null;
-    function loadIntoFrame(htmlContent) {
-        if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
-        
-        const blob = new Blob([htmlContent], { type: 'text/html' });
-        currentBlobUrl = URL.createObjectURL(blob);
-        frame.src = currentBlobUrl;
-    }
-
-    // Refresh only when user switches back AND a day has passed
+    // The "When Tab is not in use" fix:
+    // Only triggers a GitHub refresh if you return and 24h have passed.
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
-            const lastUpdate = localStorage.getItem('last_sync_time');
-            if (Date.now() - lastUpdate > ONE_DAY) {
-                performUpdate();
+            const lastSync = localStorage.getItem('portal_last_sync');
+            if (Date.now() - lastSync > DAY_MS) {
+                syncGitHub();
             }
         }
     });
 
-    // Ctrl+J Force Manual Refresh
+    // Manual Force Refresh (Ctrl+J)
     document.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'j') {
             e.preventDefault();
-            performUpdate();
+            syncGitHub();
         }
     });
 
-    init();
 </script>
 </body>
 </html>
